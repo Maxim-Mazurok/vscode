@@ -35,7 +35,7 @@ export class GithubRemoteSourceProvider implements RemoteSourceProvider {
 	readonly icon = 'github';
 	readonly supportsQuery = true;
 
-	private userReposCache: RemoteSource[] = [];
+	private userReposCache: RemoteSource[] | null = null;
 
 	async getRemoteSources(query?: string): Promise<RemoteSource[]> {
 		const octokit = await getOctokit();
@@ -49,16 +49,20 @@ export class GithubRemoteSourceProvider implements RemoteSourceProvider {
 			}
 		}
 
+		// User repos first so they take priority in the merged result.
 		const all = await Promise.all([
-			this.getQueryRemoteSources(octokit, query),
 			this.getUserRemoteSources(octokit, query),
+			this.getQueryRemoteSources(octokit, query),
 		]);
 
 		const map = new Map<string, RemoteSource>();
 
 		for (const group of all) {
 			for (const remoteSource of group) {
-				map.set(remoteSource.name, remoteSource);
+				// Keep first occurrence so user repos win over matching public search results.
+				if (!map.has(remoteSource.name)) {
+					map.set(remoteSource.name, remoteSource);
+				}
 			}
 		}
 
@@ -66,14 +70,30 @@ export class GithubRemoteSourceProvider implements RemoteSourceProvider {
 	}
 
 	private async getUserRemoteSources(octokit: Octokit, query?: string): Promise<RemoteSource[]> {
-		if (!query) {
-			const user = await octokit.users.getAuthenticated({});
-			const username = user.data.login;
-			const res = await octokit.repos.listForAuthenticatedUser({ username, sort: 'updated', per_page: 100 });
-			this.userReposCache = res.data.map(asRemoteSource);
+		// Lazily populate the cache on first use, regardless of whether a query is present.
+		if (this.userReposCache === null) {
+			try {
+				const res = await octokit.repos.listForAuthenticatedUser({
+					affiliation: 'owner,collaborator,organization_member',
+					sort: 'updated',
+					per_page: 100
+				});
+				this.userReposCache = res.data.map(asRemoteSource);
+			} catch {
+				this.userReposCache = [];
+			}
 		}
 
-		return this.userReposCache;
+		const normalizedQuery = query?.trim().toLowerCase();
+		if (!normalizedQuery) {
+			return this.userReposCache;
+		}
+
+		// Filter cached repos by query, stripping codicon prefixes like $(github) before matching.
+		return this.userReposCache.filter(repo => {
+			const displayName = repo.name.replace(/^\$\(\w+\)\s*/, '').toLowerCase();
+			return normalizedQuery.split(/\s+/).every(part => displayName.includes(part));
+		});
 	}
 
 	private async getQueryRemoteSources(octokit: Octokit, query?: string): Promise<RemoteSource[]> {
