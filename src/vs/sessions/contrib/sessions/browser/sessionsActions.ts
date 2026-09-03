@@ -14,6 +14,7 @@ import { localize, localize2 } from '../../../../nls.js';
 import { Action2, MenuRegistry, MenuId, registerAction2, MenuItemAction } from '../../../../platform/actions/common/actions.js';
 import { IActionViewItemService } from '../../../../platform/actions/browser/actionViewItemService.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { ContextKeyExpr, IContextKey, IContextKeyService } from '../../../../platform/contextkey/common/contextkey.js';
 import { InputFocusedContext } from '../../../../platform/contextkey/common/contextkeys.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
@@ -57,6 +58,10 @@ import { groupSessionsForPicker } from './sessionsPicker.js';
 import { getSessionConversationActionId, isSessionConversationSideChat, SESSION_CONVERSATION_SIDE_CHATS_GROUP } from '../../../browser/sessionConversationGroups.js';
 import { ISessionChatItem, SessionChatItemCanDeleteContext, SessionChatItemCanRenameContext, SessionChatItemIsUntitledContext } from './views/sessionsList.js';
 import './media/newSessionActionViewItem.css';
+
+export const NEW_SESSION_BUTTON_STYLE_SETTING = 'sessions.newSessionButton.style';
+export const NEW_SESSION_BUTTON_STYLE_TREATMENT = 'agentSessionsNewSessionButtonStyle';
+export type NewSessionButtonStyle = 'default' | 'lightweight' | 'lightweightWithKeybindingBackground';
 
 // -- Show Sessions Picker --
 
@@ -1181,6 +1186,8 @@ export abstract class CompactButtonActionViewItem extends BaseActionViewItem {
 	/** Hook invoked right before the action runs (e.g. for telemetry). */
 	protected onRun(): void { }
 
+	protected configureButton(_button: Button): void { }
+
 	override render(container: HTMLElement): void {
 		super.render(container);
 
@@ -1198,6 +1205,7 @@ export abstract class CompactButtonActionViewItem extends BaseActionViewItem {
 			supportIcons: true,
 		}));
 		button.element.classList.add('agent-sessions-compact-new-button');
+		this.configureButton(button);
 		const onboardingTargetId = this.onboardingTargetId;
 		if (onboardingTargetId) {
 			this._register(markOnboardingTarget(button.element, onboardingTargetId));
@@ -1279,6 +1287,7 @@ class NewSessionActionViewItem extends CompactButtonActionViewItem {
 		@IHoverService hoverService: IHoverService,
 		@ITelemetryService private readonly telemetryService: ITelemetryService,
 		@IContextKeyService contextKeyService: IContextKeyService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
 	) {
 		super(action, keybindingService, hoverService, contextKeyService);
 	}
@@ -1293,6 +1302,20 @@ class NewSessionActionViewItem extends CompactButtonActionViewItem {
 
 	protected override get onboardingTargetId(): string {
 		return 'sessions.newSession.button';
+	}
+
+	protected override configureButton(button: Button): void {
+		const updateStyle = () => {
+			const style = this.configurationService.getValue<NewSessionButtonStyle>(NEW_SESSION_BUTTON_STYLE_SETTING);
+			button.element.classList.toggle('lightweight', style === 'lightweight' || style === 'lightweightWithKeybindingBackground');
+			button.element.classList.toggle('lightweight-keybinding-background', style === 'lightweightWithKeybindingBackground');
+		};
+		updateStyle();
+		this._register(this.configurationService.onDidChangeConfiguration(event => {
+			if (event.affectsConfiguration(NEW_SESSION_BUTTON_STYLE_SETTING)) {
+				updateStyle();
+			}
+		}));
 	}
 
 	protected override getHoverContent(keybindingLabel: string | undefined): string {
